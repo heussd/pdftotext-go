@@ -98,6 +98,9 @@ func ExtractInPopplerTsv(pdfBytes []byte) (tsvRows []PopplerTsvRow, err error) {
 		newTsv := PopplerTsvRow{}
 
 		for i := 0; i < tsvT.NumField(); i++ {
+			if i >= len(fields) {
+				continue
+			}
 
 			field := reflect.ValueOf(&newTsv).Elem().Field(i)
 			var col int
