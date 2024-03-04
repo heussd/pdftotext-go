@@ -1,6 +1,6 @@
 module github.com/heussd/pdftotext-go
 
-go 1.20
+go 1.22
 
 require github.com/stretchr/testify v1.9.0
 

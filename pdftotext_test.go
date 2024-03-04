@@ -1,15 +1,17 @@
 package pdftotext
 
 import (
-	"github.com/stretchr/testify/assert"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 const (
 	pdfOkRhel          = "testdata/rhel_whatsnewrhel7beta_techoverview_.pdf"
 	pdfProtectedLetter = "testdata/protectedLetter.pdf"
+	pdfEncrypted       = "testdata/Hello-World-password_is_password.pdf"
 	notAPdf            = "model.go"
 )
 
@@ -86,6 +88,15 @@ func TestBasicUsageProtectedPdf(t *testing.T) {
 
 func TestNotAPdf(t *testing.T) {
 	pdf, err := os.ReadFile(notAPdf)
+	assert.NoError(t, err)
+
+	_, err = ExtractInPopplerTsv(pdf)
+	assert.Error(t, err)
+}
+
+func TestEncryptedPdf(t *testing.T) {
+	// Encrypted PDFs are not supported, this is indicated by return code 1 from poppler
+	pdf, err := os.ReadFile(pdfEncrypted)
 	assert.NoError(t, err)
 
 	_, err = ExtractInPopplerTsv(pdf)
