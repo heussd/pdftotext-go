@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+
+	"github.com/Masterminds/semver/v3"
 )
 
 // Extract PDF text content in simplified format
@@ -133,4 +135,53 @@ func ExtractInPopplerTsv(pdfBytes []byte) (tsvRows []PopplerTsvRow, err error) {
 	}
 
 	return tsvRows, nil
+}
+
+func CheckPopplerVersion() (fullVersionString string, err error) {
+	cmd := exec.Command("pdftotext", "-v")
+
+	var out bytes.Buffer
+	cmd.Stderr = &out
+
+	if err = cmd.Run(); err != nil {
+		panic(fmt.Errorf("error executing binary: %w", err))
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(string(out.Bytes())))
+
+	scanner.Scan()
+	line := scanner.Text()
+	fields := strings.Fields(line)
+
+	if len(fields) < 2 {
+		panic("No version information extracted")
+	}
+
+	fullVersionString = fields[2]
+
+	var constraint *semver.Constraints
+	var version *semver.Version
+
+	// https://poppler.freedesktop.org/releases.html
+	// poppler introduced the "tsv" parameter with this version:
+	const popplerVersionConstraint = ">= 22.05.0"
+
+	if constraint, err = semver.NewConstraint(popplerVersionConstraint); err != nil {
+		panic(fmt.Sprintf("Cannot parse constraint string \"%s\"", popplerVersionConstraint))
+	}
+
+	if version, err = semver.NewVersion(fullVersionString); err != nil {
+		panic(fmt.Sprintf("Cannot parse version string \"%s\"", fullVersionString))
+	}
+
+	if constraint.Check(version) {
+		// poppler is compatible
+		return fullVersionString, nil
+	}
+
+	panic(fmt.Sprintf("Incompatible poppler version: require version \"%s\", but found version \"%s\"", constraint.String(), version.String()))
+}
+
+func init() {
+	CheckPopplerVersion()
 }
