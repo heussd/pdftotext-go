@@ -13,6 +13,7 @@ const (
 	pdfProtectedLetter = "testdata/protectedLetter.pdf"
 	pdfEncrypted       = "testdata/Hello-World-password_is_password.pdf"
 	notAPdf            = "model.go"
+	pdfMalformed       = "testdata/malformed.pdf"
 )
 
 func TestBasicUsage(t *testing.T) {
@@ -37,7 +38,7 @@ func TestBasicUsage(t *testing.T) {
 }
 
 func TestBasicUsageAndFailWithProblematicPdf(t *testing.T) {
-	pdf, err := os.ReadFile(pdfProtectedLetter)
+	pdf, err := os.ReadFile(pdfMalformed)
 	assert.NoError(t, err)
 
 	_, err = ExtractOrError(pdf)
