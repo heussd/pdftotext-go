@@ -50,7 +50,7 @@ func ExtractOrError(pdfBytes []byte) (pages []PdfPage, err error) {
 		return pages, err
 	}
 
-	if len(pages) > 0 {
+	if len(pages) == 0 {
 		return pages, fmt.Errorf("no pages extracted")
 	}
 
