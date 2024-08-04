@@ -16,3 +16,8 @@ Wraps the command line tool `pdftotext` ([poppler-utils](https://poppler.freedes
 ## Why poppler version >=22.05.0
 
 [Version 22.05.0 of poppler](https://poppler.freedesktop.org/releases.html) introduced a new parameter `-tsv`, which extracts PDF content with meta data as TSV. This functionality is essential for the operation of this library.
+
+
+## Thanks to
+
+- [amitaifrey](https://github.com/amitaifrey) for finding and fixing a bug
