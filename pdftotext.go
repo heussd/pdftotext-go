@@ -3,6 +3,7 @@ package pdftotext
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"os/exec"
 	"reflect"
@@ -10,24 +11,40 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/pkg/errors"
 )
 
-// Extract PDF text content in simplified format
-func Extract(pdfBytes []byte) (pdfPages []PdfPage, err error) {
-	var tsv []PopplerTsvRow
-	if tsv, err = ExtractInPopplerTsv(pdfBytes); err != nil {
+// https://poppler.freedesktop.org/releases.html
+// poppler introduced the "tsv" parameter with this version:
+const popplerVersionConstraint = ">= 22.05.0"
+
+// Extract PDF text content in simplified format, it uses context.Background under the hood. Use ExtractContext to specify a context
+func Extract(pdfBytes []byte) ([]PdfPage, error) {
+	return ExtractContext(context.Background(), pdfBytes)
+}
+
+// ExtractContext behaves the same as Extract but lets the caller pass a Context
+func ExtractContext(ctx context.Context, pdfBytes []byte) ([]PdfPage, error) {
+	var pdfPages []PdfPage
+
+	tsv, err := ExtractInPopplerTsvContext(ctx, pdfBytes)
+
+	if err != nil {
 		return nil, err
 	}
 
 	prevPage := 1
 	prevContent := ""
+
 	for i, row := range tsv {
 		if row.Conf != -1 { // Seems to indicate control sequences
 			prevContent += row.Text + " "
 		}
 
-		var pageChanged = prevPage != row.PageNum
-		var lastIteration = i == len(tsv)-1
+		var (
+			pageChanged   = prevPage != row.PageNum
+			lastIteration = i == len(tsv)-1
+		)
 
 		if pageChanged || lastIteration {
 			pdfPages = append(pdfPages, PdfPage{
@@ -38,59 +55,76 @@ func Extract(pdfBytes []byte) (pdfPages []PdfPage, err error) {
 			prevPage = row.PageNum
 			prevContent = ""
 		}
-
 	}
 
 	return pdfPages, nil
 }
 
-// ExtractOrError Just like Extract, but indicates issues with errors
-func ExtractOrError(pdfBytes []byte) (pages []PdfPage, err error) {
-	if pages, err = Extract(pdfBytes); err != nil {
+// ExtractOrError Just like Extract, but indicates issues with errors, it uses context.Background under the hood. Use ExtractOrErrorContext to specify a context
+func ExtractOrError(pdfBytes []byte) ([]PdfPage, error) {
+	return ExtractOrErrorContext(context.Background(), pdfBytes)
+}
+
+// ExtractOrErrorContext behaves the same as ExtractOrError but lets the caller pass a Context
+func ExtractOrErrorContext(ctx context.Context, pdfBytes []byte) ([]PdfPage, error) {
+	pages, err := ExtractContext(ctx, pdfBytes)
+
+	if err != nil {
 		return pages, err
 	}
 
 	if len(pages) == 0 {
-		return pages, fmt.Errorf("no pages extracted")
+		return pages, errors.New("no pages extracted")
 	}
 
 	hasContent := false
+
 	for _, p := range pages {
 		if p.Content != "" {
 			hasContent = true
+
 			break
 		}
 	}
 
 	if !hasContent {
-		return pages, fmt.Errorf("no page text extracted")
+		return pages, errors.New("no page text extracted")
 	}
 
 	return pages, err
 }
 
-// ExtractInPopplerTsv Access raw stdout content from Poppler
-func ExtractInPopplerTsv(pdfBytes []byte) (tsvRows []PopplerTsvRow, err error) {
+// ExtractInPopplerTsv Access raw stdout content from Poppler, it uses context.Background under the hood. Use ExtractInPopplerTsvContext to specify a context
+func ExtractInPopplerTsv(pdfBytes []byte) ([]PopplerTsvRow, error) {
+	return ExtractInPopplerTsvContext(context.Background(), pdfBytes)
+}
+
+// ExtractInPopplerTsvContext behaves the same as ExtractInPopplerTsv but lets the caller pass a Context
+func ExtractInPopplerTsvContext(ctx context.Context, pdfBytes []byte) ([]PopplerTsvRow, error) {
 	params := []string{
 		"-tsv",
 		"-", // Read from stdin
 		"-", // Write to stdout
 	}
 
-	cmd := exec.Command("pdftotext", params...)
+	cmd := exec.CommandContext(ctx, "pdftotext", params...)
 	cmd.Stdin = bytes.NewReader(pdfBytes)
 
 	var out bytes.Buffer
+
 	cmd.Stdout = &out
 
-	if err = cmd.Run(); err != nil {
-		return nil, fmt.Errorf("error executing pdftotext binary: %w", err)
+	if err := cmd.Run(); err != nil {
+		return nil, errors.Wrap(err, "error executing pdftotext binary")
 	}
 
-	tsvT := reflect.TypeOf(PopplerTsvRow{})
-	scanner := bufio.NewScanner(strings.NewReader(string(out.Bytes())))
+	var tsvRows []PopplerTsvRow
+
+	tsvT := reflect.TypeFor[PopplerTsvRow]()
+	scanner := bufio.NewScanner(strings.NewReader(out.String()))
 
 	scanner.Scan() // Ignore TSV header
+
 	for scanner.Scan() {
 		var (
 			line   = scanner.Text()
@@ -105,29 +139,33 @@ func ExtractInPopplerTsv(pdfBytes []byte) (tsvRows []PopplerTsvRow, err error) {
 			}
 
 			field := reflect.ValueOf(&newTsv).Elem().Field(i)
-			var col int
-			if col, err = strconv.Atoi(tsvT.Field(i).Tag.Get("col")); err != nil {
-				return nil, fmt.Errorf(string("cannot parse tag as int: %w"), err)
+			col, err := strconv.Atoi(tsvT.Field(i).Tag.Get("col"))
+
+			if err != nil {
+				return nil, errors.Wrap(err, "cannot parse tag as int")
 			}
 
 			switch field.Interface().(type) {
 			case int:
-				var newInteger int
-				if newInteger, err = strconv.Atoi(fields[col]); err != nil {
-					return nil, fmt.Errorf("cannot convert value to int: %w", err)
+				newInteger, err := strconv.Atoi(fields[col])
+
+				if err != nil {
+					return nil, errors.Wrap(err, "cannot convert value to int")
 				}
+
 				field.SetInt(int64(newInteger))
 			case float64:
-				var newFloat float64
-				if newFloat, err = strconv.ParseFloat(fields[col], 64); err != nil {
-					return nil, fmt.Errorf("cannot convert value to float32: %w", err)
+				newFloat, err := strconv.ParseFloat(fields[col], 64)
+
+				if err != nil {
+					return nil, errors.Wrap(err, "cannot convert value to float32")
 				}
+
 				field.SetFloat(newFloat)
-				break
 			case string:
 				field.SetString(fields[col])
 			default:
-				panic("don't know how to map " + field.Type().String())
+				return nil, fmt.Errorf("cannot map %s", field.Type().String())
 			}
 		}
 
@@ -137,51 +175,52 @@ func ExtractInPopplerTsv(pdfBytes []byte) (tsvRows []PopplerTsvRow, err error) {
 	return tsvRows, nil
 }
 
-func CheckPopplerVersion() (fullVersionString string, err error) {
-	cmd := exec.Command("pdftotext", "-v")
+// CheckPopplerVersion checks the version of the currently-available poppler tool and returns it if suitable, otherwise it will return an error.
+func CheckPopplerVersion(ctx context.Context) (string, error) {
+	cmd := exec.CommandContext(ctx, "pdftotext", "-v")
 
 	var out bytes.Buffer
+
 	cmd.Stderr = &out
 
-	if err = cmd.Run(); err != nil {
-		panic(fmt.Errorf("error executing binary: %w", err))
+	if err := cmd.Run(); err != nil {
+		return "", errors.Wrap(err, "error executing binary")
 	}
 
-	scanner := bufio.NewScanner(strings.NewReader(string(out.Bytes())))
+	scanner := bufio.NewScanner(strings.NewReader(out.String()))
 
 	scanner.Scan()
 	line := scanner.Text()
 	fields := strings.Fields(line)
 
 	if len(fields) < 2 {
-		panic("No version information extracted")
+		return "", errors.New("no version information extracted")
 	}
 
-	fullVersionString = fields[2]
+	fullVersionString := fields[2]
 
-	var constraint *semver.Constraints
-	var version *semver.Version
+	constraint, err := semver.NewConstraint(popplerVersionConstraint)
 
-	// https://poppler.freedesktop.org/releases.html
-	// poppler introduced the "tsv" parameter with this version:
-	const popplerVersionConstraint = ">= 22.05.0"
-
-	if constraint, err = semver.NewConstraint(popplerVersionConstraint); err != nil {
-		panic(fmt.Sprintf("Cannot parse constraint string \"%s\"", popplerVersionConstraint))
+	if err != nil {
+		return "", fmt.Errorf("cannot parse constraint string \"%s\"", popplerVersionConstraint)
 	}
 
-	if version, err = semver.NewVersion(fullVersionString); err != nil {
-		panic(fmt.Sprintf("Cannot parse version string \"%s\"", fullVersionString))
+	version, err := semver.NewVersion(fullVersionString)
+
+	if err != nil {
+		return "", fmt.Errorf("cannot parse version string \"%s\"", fullVersionString)
 	}
 
-	if constraint.Check(version) {
+	if constraint != nil && version != nil && constraint.Check(version) {
 		// poppler is compatible
 		return fullVersionString, nil
 	}
 
-	panic(fmt.Sprintf("Incompatible poppler version: require version \"%s\", but found version \"%s\"", constraint.String(), version.String()))
+	return "", fmt.Errorf("incompatible poppler version: require version \"%s\", but found version \"%s\"", constraint.String(), version.String())
 }
 
 func init() {
-	CheckPopplerVersion()
+	if _, err := CheckPopplerVersion(context.Background()); err != nil {
+		panic(err)
+	}
 }
